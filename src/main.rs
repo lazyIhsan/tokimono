@@ -1,6 +1,7 @@
 mod app;
 mod event;
 mod metrics;
+mod sparkline;
 mod ui;
 
 use app::App;
