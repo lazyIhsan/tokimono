@@ -53,3 +53,14 @@ selection_fg = "white"
 ```
 
 Colors accept named colors, hex values (`"#1a1b26"`), or `"reset"`. `background` defaults to `"reset"`, so a transparent or blurred terminal background shows through tokimono's panels instead of being painted over — set it explicitly if you want a solid panel instead.
+
+### Theme presets
+
+Set `preset` under `[theme]` to start from a named palette instead of the plain defaults above — any individual color you also set overrides just that field, so you can pick a preset and tweak a color or two:
+
+```toml
+[theme]
+preset = "catppuccin-mocha"
+```
+
+Available presets: `catppuccin-mocha` (or just `catppuccin`), `catppuccin-macchiato`, `catppuccin-frappe`, `catppuccin-latte`, `gruvbox-dark` (or just `gruvbox`), `gruvbox-light`. Presets only set the accent/status colors — `background` still defaults to `"reset"` for every preset, preserving terminal transparency.

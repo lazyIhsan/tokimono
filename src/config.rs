@@ -26,6 +26,7 @@ struct RawGeneral {
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct RawTheme {
+    preset: Option<String>,
     background: Option<Color>,
     accent: Option<Color>,
     cpu_low: Option<Color>,
@@ -63,6 +64,79 @@ impl Default for Theme {
             selection_bg: Color::Blue,
             selection_fg: Color::White,
         }
+    }
+}
+
+fn hex(rgb: u32) -> Color {
+    Color::Rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
+}
+
+/// Named built-in palettes, layered under any explicit `[theme]` overrides.
+/// `background` is always `Color::Reset` here too — a preset picks the
+/// accent/status colors, not whether tokimono paints an opaque panel.
+fn preset_theme(name: &str) -> Option<Theme> {
+    match name.to_lowercase().as_str() {
+        "catppuccin" | "catppuccin-mocha" => Some(Theme {
+            background: Color::Reset,
+            accent: hex(0xcba6f7),       // Mauve
+            cpu_low: hex(0xa6e3a1),      // Green
+            cpu_mid: hex(0xf9e2af),      // Yellow
+            cpu_high: hex(0xf38ba8),     // Red
+            muted: hex(0x6c7086),        // Overlay0
+            selection_bg: hex(0x585b70), // Surface2
+            selection_fg: hex(0xcdd6f4), // Text
+        }),
+        "catppuccin-macchiato" => Some(Theme {
+            background: Color::Reset,
+            accent: hex(0xc6a0f6),
+            cpu_low: hex(0xa6da95),
+            cpu_mid: hex(0xeed49f),
+            cpu_high: hex(0xed8796),
+            muted: hex(0x6e738d),
+            selection_bg: hex(0x494d64),
+            selection_fg: hex(0xcad3f5),
+        }),
+        "catppuccin-frappe" | "catppuccin-frappé" => Some(Theme {
+            background: Color::Reset,
+            accent: hex(0xca9ee6),
+            cpu_low: hex(0xa6d189),
+            cpu_mid: hex(0xe5c890),
+            cpu_high: hex(0xe78284),
+            muted: hex(0x737994),
+            selection_bg: hex(0x51576d),
+            selection_fg: hex(0xc6d0f5),
+        }),
+        "catppuccin-latte" => Some(Theme {
+            background: Color::Reset,
+            accent: hex(0x8839ef),
+            cpu_low: hex(0x40a02b),
+            cpu_mid: hex(0xdf8e1d),
+            cpu_high: hex(0xd20f39),
+            muted: hex(0x9ca0b0),
+            selection_bg: hex(0xbcc0cc),
+            selection_fg: hex(0x4c4f69),
+        }),
+        "gruvbox" | "gruvbox-dark" => Some(Theme {
+            background: Color::Reset,
+            accent: hex(0xfe8019),       // bright orange
+            cpu_low: hex(0xb8bb26),      // bright green
+            cpu_mid: hex(0xfabd2f),      // bright yellow
+            cpu_high: hex(0xfb4934),     // bright red
+            muted: hex(0x928374),        // gray
+            selection_bg: hex(0x504945), // bg2
+            selection_fg: hex(0xebdbb2), // fg1
+        }),
+        "gruvbox-light" => Some(Theme {
+            background: Color::Reset,
+            accent: hex(0xaf3a03),       // faded orange
+            cpu_low: hex(0x79740e),      // faded green
+            cpu_mid: hex(0xb57614),      // faded yellow
+            cpu_high: hex(0x9d0006),     // faded red
+            muted: hex(0x928374),        // gray
+            selection_bg: hex(0xd5c4a1), // bg2
+            selection_fg: hex(0x3c3836), // fg1
+        }),
+        _ => None,
     }
 }
 
@@ -105,7 +179,13 @@ pub fn load() -> Config {
         Err(_) => RawConfig::default(),
     };
 
-    let defaults = Theme::default();
+    let defaults = match raw.theme.preset.as_deref() {
+        Some(name) => preset_theme(name).unwrap_or_else(|| {
+            eprintln!("tokimono: unknown theme preset \"{name}\", using default");
+            Theme::default()
+        }),
+        None => Theme::default(),
+    };
     Config {
         tick_rate: raw
             .general
@@ -135,4 +215,54 @@ fn ensure_starter_file(path: &Path) {
         return;
     }
     let _ = fs::write(path, STARTER_TEMPLATE);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn known_presets_resolve() {
+        for name in [
+            "catppuccin-mocha",
+            "catppuccin-macchiato",
+            "catppuccin-frappe",
+            "catppuccin-latte",
+            "gruvbox-dark",
+            "gruvbox-light",
+        ] {
+            assert!(preset_theme(name).is_some(), "{name} should resolve");
+        }
+    }
+
+    #[test]
+    fn bare_family_names_alias_to_a_default_flavor() {
+        assert!(preset_theme("catppuccin").is_some());
+        assert!(preset_theme("gruvbox").is_some());
+    }
+
+    #[test]
+    fn preset_lookup_is_case_insensitive() {
+        assert!(preset_theme("CATPPUCCIN-MOCHA").is_some());
+        assert!(preset_theme("Gruvbox-Dark").is_some());
+    }
+
+    #[test]
+    fn unknown_preset_returns_none() {
+        assert!(preset_theme("not-a-real-theme").is_none());
+    }
+
+    #[test]
+    fn presets_never_override_the_transparent_background_default() {
+        for name in ["catppuccin-mocha", "gruvbox-dark", "gruvbox-light"] {
+            let theme = preset_theme(name).unwrap();
+            assert_eq!(theme.background, Color::Reset);
+        }
+    }
+
+    #[test]
+    fn catppuccin_mocha_uses_documented_accent_color() {
+        let theme = preset_theme("catppuccin-mocha").unwrap();
+        assert_eq!(theme.accent, hex(0xcba6f7));
+    }
 }
