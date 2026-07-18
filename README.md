@@ -29,3 +29,27 @@
 
 ```bash
 cargo install tokimono
+```
+
+---
+
+## ⚙️ Configuration
+
+Tokimono reads `~/.config/tokimono/config.toml` (or `$XDG_CONFIG_HOME/tokimono/config.toml`), writing a commented starter file there the first time it runs. It controls the refresh rate and color theme:
+
+```toml
+[general]
+refresh_rate_ms = 250
+
+[theme]
+background = "reset"   # "reset" preserves terminal transparency (e.g. kitty)
+accent = "cyan"
+cpu_low = "green"
+cpu_mid = "yellow"
+cpu_high = "red"
+muted = "darkgray"
+selection_bg = "blue"
+selection_fg = "white"
+```
+
+Colors accept named colors, hex values (`"#1a1b26"`), or `"reset"`. `background` defaults to `"reset"`, so a transparent or blurred terminal background shows through tokimono's panels instead of being painted over — set it explicitly if you want a solid panel instead.

@@ -1,0 +1,30 @@
+# tokimono configuration
+#
+# This file is written once on first run and never overwritten. Everything
+# below is commented out and shows the built-in defaults — uncomment and
+# edit whatever you want to change.
+
+[general]
+# How often metrics refresh, in milliseconds. Lower is more responsive but
+# uses more CPU. Values below 50 are clamped up to 50.
+# refresh_rate_ms = 250
+
+[theme]
+# Colors accept a named color (black, red, green, yellow, blue, magenta,
+# cyan, gray, darkgray, lightred, lightgreen, lightyellow, lightblue,
+# lightmagenta, lightcyan, white), a hex value like "#1a1b26", or "reset".
+#
+# "reset" means "don't paint a background at all" — it lets your terminal's
+# own background (and transparency/blur, e.g. kitty's background_opacity)
+# show through. That's the default. Set an explicit color here instead if
+# you want tokimono to always draw a solid panel regardless of terminal
+# settings.
+# background = "reset"
+
+# accent = "cyan"        # app title
+# cpu_low = "green"      # per-core CPU usage below 50%
+# cpu_mid = "yellow"     # per-core CPU usage 50-80%
+# cpu_high = "red"       # per-core CPU usage above 80%
+# muted = "darkgray"     # footer, truncation notices
+# selection_bg = "blue"  # selected row background in the process table
+# selection_fg = "white" # selected row text color

@@ -5,11 +5,11 @@ use crossterm::event::{KeyCode, KeyEventKind};
 use ratatui::DefaultTerminal;
 use sysinfo::Signal;
 
+use crate::config::{Config, Theme};
 use crate::event::{Event, EventHandler};
 use crate::metrics::{Collector, Snapshot};
 use crate::ui;
 
-const TICK_RATE: Duration = Duration::from_millis(250);
 const HISTORY_CAP: usize = 240;
 
 /// Which process column drives the sort order.
@@ -30,10 +30,12 @@ pub struct App {
     pub sort_desc: bool,
     pub selected_pid: Option<u32>,
     pub confirm_kill: Option<u32>,
+    pub theme: Theme,
+    tick_rate: Duration,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(config: Config) -> Self {
         Self {
             running: true,
             collector: Collector::new(),
@@ -48,11 +50,13 @@ impl App {
             sort_desc: true,
             selected_pid: None,
             confirm_kill: None,
+            theme: config.theme,
+            tick_rate: config.tick_rate,
         }
     }
 
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> color_eyre::Result<()> {
-        let mut events = EventHandler::new(TICK_RATE);
+        let mut events = EventHandler::new(self.tick_rate);
 
         while self.running {
             terminal.draw(|frame| ui::draw(frame, &self))?;
