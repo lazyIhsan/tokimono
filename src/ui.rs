@@ -1,24 +1,27 @@
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     widgets::{Block, Borders, Paragraph},
 };
 
 use crate::app::{App, SortKey};
+use crate::config::Theme;
 use crate::sparkline;
 
-fn load_color(pct: f32) -> Color {
+fn load_color(theme: &Theme, pct: f32) -> ratatui::style::Color {
     if pct < 50.0 {
-        Color::Green
+        theme.cpu_low
     } else if pct < 80.0 {
-        Color::Yellow
+        theme.cpu_mid
     } else {
-        Color::Red
+        theme.cpu_high
     }
 }
 
 pub fn draw(frame: &mut Frame, app: &App) {
+    let theme = &app.theme;
+
     let [header, body, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(0),
@@ -27,7 +30,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     .areas(frame.area());
 
     frame.render_widget(
-        Paragraph::new("tokimono").style(Style::default().fg(Color::Cyan)),
+        Paragraph::new("tokimono").style(Style::default().fg(theme.accent).bg(theme.background)),
         header,
     );
 
@@ -47,12 +50,13 @@ pub fn draw(frame: &mut Frame, app: &App) {
         "q: quit  j/k: select  c/m/p/n: sort  x: kill".to_string()
     };
     frame.render_widget(
-        Paragraph::new(footer_text).style(Style::default().fg(Color::DarkGray)),
+        Paragraph::new(footer_text).style(Style::default().fg(theme.muted).bg(theme.background)),
         footer,
     );
 }
 
 fn draw_overview(frame: &mut Frame, app: &App, body: Rect) {
+    let theme = &app.theme;
     let cpu_summary = if app.latest.cpu_usage_per_core.is_empty() {
         "collecting...".to_string()
     } else {
@@ -65,7 +69,10 @@ fn draw_overview(frame: &mut Frame, app: &App, body: Rect) {
         )
     };
 
-    let overview_block = Block::default().borders(Borders::ALL).title("Overview");
+    let overview_block = Block::default()
+        .borders(Borders::ALL)
+        .title("Overview")
+        .style(Style::default().bg(theme.background));
     let inner = overview_block.inner(body);
     frame.render_widget(overview_block, body);
 
@@ -85,7 +92,10 @@ fn draw_overview(frame: &mut Frame, app: &App, body: Rect) {
     }
     let rows = Layout::vertical(constraints).split(inner);
 
-    frame.render_widget(Paragraph::new(cpu_summary), rows[0]);
+    frame.render_widget(
+        Paragraph::new(cpu_summary).style(Style::default().bg(theme.background)),
+        rows[0],
+    );
 
     for idx in 0..shown_cores {
         let row = rows[1 + idx];
@@ -107,7 +117,11 @@ fn draw_overview(frame: &mut Frame, app: &App, body: Rect) {
         let spark = sparkline::render(&samples, 100.0);
         let text = format!("{idx:>2} {spark} {pct:>5.1}%");
         frame.render_widget(
-            Paragraph::new(text).style(Style::default().fg(load_color(pct))),
+            Paragraph::new(text).style(
+                Style::default()
+                    .fg(load_color(theme, pct))
+                    .bg(theme.background),
+            ),
             row,
         );
     }
@@ -121,7 +135,7 @@ fn draw_overview(frame: &mut Frame, app: &App, body: Rect) {
             remaining_avg
         );
         frame.render_widget(
-            Paragraph::new(text).style(Style::default().fg(Color::DarkGray)),
+            Paragraph::new(text).style(Style::default().fg(theme.muted).bg(theme.background)),
             rows[1 + shown_cores],
         );
     }
@@ -137,13 +151,17 @@ fn sort_label(key: SortKey) -> &'static str {
 }
 
 fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
     let dir = if app.sort_desc { "↓" } else { "↑" };
     let title = format!(
         "Processes ({} {dir}, {} total)",
         sort_label(app.sort_key),
         app.latest.processes.len()
     );
-    let block = Block::default().borders(Borders::ALL).title(title);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .style(Style::default().bg(theme.background));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -169,7 +187,11 @@ fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
 
     let header = format!("{:>7} {:<24.24} {:>7} {:>10}", "PID", "NAME", "CPU%", "MEM");
     frame.render_widget(
-        Paragraph::new(header).style(Style::default().add_modifier(Modifier::BOLD)),
+        Paragraph::new(header).style(
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .bg(theme.background),
+        ),
         rows[0],
     );
 
@@ -184,11 +206,11 @@ fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
         );
         let style = if is_selected {
             Style::default()
-                .bg(Color::Blue)
-                .fg(Color::White)
+                .bg(theme.selection_bg)
+                .fg(theme.selection_fg)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default()
+            Style::default().bg(theme.background)
         };
         frame.render_widget(Paragraph::new(text).style(style), rows[1 + row_idx]);
     }
