@@ -3,7 +3,7 @@
 > A fast, modern, Tokio-powered terminal system monitor for Linux.
 
 [![Crates.io](https://img.shields.io/crates/v/tokimono)](https://crates.io/crates/tokimono)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
 
 **Tokimono** brings real-time system monitoring to your terminal with a clean, responsive TUI built on top of Tokio and Ratatui. Inspired by the best of `htop`, `btop`, and `glances`, it focuses on clarity, performance, and delightful keyboard-driven interaction.
