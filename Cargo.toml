@@ -2,6 +2,12 @@
 name = "tokimono"
 version = "0.1.0"
 edition = "2024"
+description = "A fast, modern, Tokio-powered terminal system monitor for Linux."
+license = "Apache-2.0"
+repository = "https://github.com/lazyIhsan/tokimono"
+readme = "README.md"
+keywords = ["tui", "monitor", "system", "terminal", "htop"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 color-eyre = "0.6.5"
