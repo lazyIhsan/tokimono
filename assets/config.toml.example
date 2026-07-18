@@ -10,15 +10,26 @@
 # refresh_rate_ms = 250
 
 [theme]
+# Starts from a named built-in palette instead of the plain default colors
+# below. Any individual color you also set (in this same [theme] table)
+# overrides just that one field, so you can pick a preset and tweak a color
+# or two without losing the rest of it.
+#
+# Available presets: catppuccin-mocha (or just "catppuccin"),
+# catppuccin-macchiato, catppuccin-frappe, catppuccin-latte, gruvbox-dark
+# (or just "gruvbox"), gruvbox-light.
+# preset = "catppuccin-mocha"
+
 # Colors accept a named color (black, red, green, yellow, blue, magenta,
 # cyan, gray, darkgray, lightred, lightgreen, lightyellow, lightblue,
 # lightmagenta, lightcyan, white), a hex value like "#1a1b26", or "reset".
 #
 # "reset" means "don't paint a background at all" — it lets your terminal's
 # own background (and transparency/blur, e.g. kitty's background_opacity)
-# show through. That's the default. Set an explicit color here instead if
-# you want tokimono to always draw a solid panel regardless of terminal
-# settings.
+# show through. That's the default (including for every preset above — a
+# preset only changes the accent/status colors, not this). Set an explicit
+# color here instead if you want tokimono to always draw a solid panel
+# regardless of terminal settings.
 # background = "reset"
 
 # accent = "cyan"        # app title
