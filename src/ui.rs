@@ -1,11 +1,11 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout},
-    style::{Color, Style},
+    layout::{Constraint, Layout, Rect},
+    style::{Color, Modifier, Style},
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::app::App;
+use crate::app::{App, SortKey};
 use crate::sparkline;
 
 fn load_color(pct: f32) -> Color {
@@ -31,6 +31,28 @@ pub fn draw(frame: &mut Frame, app: &App) {
         header,
     );
 
+    // Cap the CPU overview so the process table always keeps some room,
+    // even on machines with many cores.
+    let core_rows = app.latest.cpu_usage_per_core.len().min(8) as u16;
+    let overview_len = core_rows + 1 /* summary row */ + 2 /* borders */;
+    let [overview_area, process_area] =
+        Layout::vertical([Constraint::Length(overview_len), Constraint::Min(0)]).areas(body);
+
+    draw_overview(frame, app, overview_area);
+    draw_processes(frame, app, process_area);
+
+    let footer_text = if let Some(pid) = app.confirm_kill {
+        format!("Kill PID {pid}? y = confirm, any other key = cancel")
+    } else {
+        "q: quit  j/k: select  c/m/p/n: sort  x: kill".to_string()
+    };
+    frame.render_widget(
+        Paragraph::new(footer_text).style(Style::default().fg(Color::DarkGray)),
+        footer,
+    );
+}
+
+fn draw_overview(frame: &mut Frame, app: &App, body: Rect) {
     let cpu_summary = if app.latest.cpu_usage_per_core.is_empty() {
         "collecting...".to_string()
     } else {
@@ -103,9 +125,71 @@ pub fn draw(frame: &mut Frame, app: &App) {
             rows[1 + shown_cores],
         );
     }
+}
 
-    frame.render_widget(
-        Paragraph::new("q: quit").style(Style::default().fg(Color::DarkGray)),
-        footer,
+fn sort_label(key: SortKey) -> &'static str {
+    match key {
+        SortKey::Cpu => "CPU%",
+        SortKey::Memory => "MEM",
+        SortKey::Pid => "PID",
+        SortKey::Name => "NAME",
+    }
+}
+
+fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
+    let dir = if app.sort_desc { "↓" } else { "↑" };
+    let title = format!(
+        "Processes ({} {dir}, {} total)",
+        sort_label(app.sort_key),
+        app.latest.processes.len()
     );
+    let block = Block::default().borders(Borders::ALL).title(title);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if inner.height == 0 {
+        return;
+    }
+
+    let rows_available = inner.height.saturating_sub(1) as usize; // row 0 = column header
+    let selected_idx = app
+        .selected_pid
+        .and_then(|pid| app.latest.processes.iter().position(|p| p.pid == pid))
+        .unwrap_or(0);
+    let start = if selected_idx >= rows_available {
+        selected_idx + 1 - rows_available
+    } else {
+        0
+    };
+    let end = (start + rows_available).min(app.latest.processes.len());
+
+    let constraints =
+        std::iter::repeat_n(Constraint::Length(1), 1 + (end - start)).collect::<Vec<_>>();
+    let rows = Layout::vertical(constraints).split(inner);
+
+    let header = format!("{:>7} {:<24.24} {:>7} {:>10}", "PID", "NAME", "CPU%", "MEM");
+    frame.render_widget(
+        Paragraph::new(header).style(Style::default().add_modifier(Modifier::BOLD)),
+        rows[0],
+    );
+
+    for (row_idx, process) in app.latest.processes[start..end].iter().enumerate() {
+        let is_selected = Some(process.pid) == app.selected_pid;
+        let text = format!(
+            "{:>7} {:<24.24} {:>6.1}% {:>9.1}M",
+            process.pid,
+            process.name,
+            process.cpu_usage,
+            process.memory as f64 / 1_048_576.0,
+        );
+        let style = if is_selected {
+            Style::default()
+                .bg(Color::Blue)
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        frame.render_widget(Paragraph::new(text).style(style), rows[1 + row_idx]);
+    }
 }
