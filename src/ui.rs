@@ -19,6 +19,34 @@ fn load_color(theme: &Theme, pct: f32) -> ratatui::style::Color {
     }
 }
 
+/// Caps a list of `total` items to fit within `available_rows`, reserving
+/// one row for a truncation notice ("+N more") when not everything fits.
+fn fit_rows(total: usize, available_rows: usize) -> (usize, bool) {
+    if total > available_rows {
+        (available_rows.saturating_sub(1), true)
+    } else {
+        (total.min(available_rows), false)
+    }
+}
+
+fn format_rate(bytes_per_sec: f64) -> String {
+    format!("{}/s", format_bytes_value(bytes_per_sec))
+}
+
+fn format_bytes_value(mut value: f64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{value:.0} {}", UNITS[unit])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
 pub fn draw(frame: &mut Frame, app: &App) {
     let theme = &app.theme;
 
@@ -34,15 +62,27 @@ pub fn draw(frame: &mut Frame, app: &App) {
         header,
     );
 
-    // Cap the CPU overview so the process table always keeps some room,
-    // even on machines with many cores.
+    // Left column: CPU overview, network, and disk panels, stacked.
+    // Right column: the process table, which gets whatever width is left.
+    let [left, right] =
+        Layout::horizontal([Constraint::Percentage(40), Constraint::Min(45)]).areas(body);
+
+    // Cap the CPU overview so the other left-column panels always keep some
+    // room, even on machines with many cores.
     let core_rows = app.latest.cpu_usage_per_core.len().min(8) as u16;
     let overview_len = core_rows + 1 /* summary row */ + 2 /* borders */;
-    let [overview_area, process_area] =
-        Layout::vertical([Constraint::Length(overview_len), Constraint::Min(0)]).areas(body);
+    let network_len = app.latest.networks.len().min(6) as u16 + 1 /* header row */ + 2 /* borders */;
+    let [overview_area, network_area, disk_area] = Layout::vertical([
+        Constraint::Length(overview_len),
+        Constraint::Length(network_len),
+        Constraint::Min(0),
+    ])
+    .areas(left);
 
     draw_overview(frame, app, overview_area);
-    draw_processes(frame, app, process_area);
+    draw_network(frame, app, network_area);
+    draw_disk(frame, app, disk_area);
+    draw_processes(frame, app, right);
 
     let footer_text = if let Some(pid) = app.confirm_kill {
         format!("Kill PID {pid}? y = confirm, any other key = cancel")
@@ -78,12 +118,7 @@ fn draw_overview(frame: &mut Frame, app: &App, body: Rect) {
 
     let n_cores = app.latest.cpu_usage_per_core.len();
     let max_rows = inner.height.saturating_sub(1) as usize; // row 0 = summary
-    let truncated = n_cores > max_rows;
-    let shown_cores = if truncated {
-        max_rows.saturating_sub(1)
-    } else {
-        n_cores.min(max_rows)
-    };
+    let (shown_cores, truncated) = fit_rows(n_cores, max_rows);
 
     let mut constraints = vec![Constraint::Length(1)];
     constraints.extend(std::iter::repeat_n(Constraint::Length(1), shown_cores));
@@ -137,6 +172,120 @@ fn draw_overview(frame: &mut Frame, app: &App, body: Rect) {
         frame.render_widget(
             Paragraph::new(text).style(Style::default().fg(theme.muted).bg(theme.background)),
             rows[1 + shown_cores],
+        );
+    }
+}
+
+fn draw_network(frame: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Network")
+        .style(Style::default().bg(theme.background));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if inner.height == 0 {
+        return;
+    }
+
+    let rows_available = inner.height.saturating_sub(1) as usize; // row 0 = header
+    let (shown, truncated) = fit_rows(app.latest.networks.len(), rows_available);
+
+    let constraints = std::iter::repeat_n(Constraint::Length(1), 1 + shown + truncated as usize)
+        .collect::<Vec<_>>();
+    let rows = Layout::vertical(constraints).split(inner);
+
+    let header = format!("{:<10.10} {:>10} {:>10}", "IFACE", "DOWN", "UP");
+    frame.render_widget(
+        Paragraph::new(header).style(
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .bg(theme.background),
+        ),
+        rows[0],
+    );
+
+    for (row_idx, net) in app.latest.networks.iter().take(shown).enumerate() {
+        let text = format!(
+            "{:<10.10} {:>10} {:>10}",
+            net.name,
+            format_rate(net.rx_rate),
+            format_rate(net.tx_rate),
+        );
+        frame.render_widget(
+            Paragraph::new(text).style(Style::default().bg(theme.background)),
+            rows[1 + row_idx],
+        );
+    }
+
+    if truncated {
+        let text = format!("… +{} more interfaces", app.latest.networks.len() - shown);
+        frame.render_widget(
+            Paragraph::new(text).style(Style::default().fg(theme.muted).bg(theme.background)),
+            rows[1 + shown],
+        );
+    }
+}
+
+fn draw_disk(frame: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Disks")
+        .style(Style::default().bg(theme.background));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if inner.height == 0 {
+        return;
+    }
+
+    let rows_available = inner.height.saturating_sub(1) as usize; // row 0 = header
+    let (shown, truncated) = fit_rows(app.latest.disks.len(), rows_available);
+
+    let constraints = std::iter::repeat_n(Constraint::Length(1), 1 + shown + truncated as usize)
+        .collect::<Vec<_>>();
+    let rows = Layout::vertical(constraints).split(inner);
+
+    let header = format!(
+        "{:<10.10} {:>5} {:>9} {:>9}",
+        "MOUNT", "USED", "READ", "WRITE"
+    );
+    frame.render_widget(
+        Paragraph::new(header).style(
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .bg(theme.background),
+        ),
+        rows[0],
+    );
+
+    for (row_idx, disk) in app.latest.disks.iter().take(shown).enumerate() {
+        let used_pct = if disk.total_space == 0 {
+            0.0
+        } else {
+            let used = disk.total_space.saturating_sub(disk.available_space);
+            used as f64 / disk.total_space as f64 * 100.0
+        };
+        let text = format!(
+            "{:<10.10} {:>4.0}% {:>9} {:>9}",
+            disk.mount_point,
+            used_pct,
+            format_rate(disk.read_rate),
+            format_rate(disk.write_rate),
+        );
+        frame.render_widget(
+            Paragraph::new(text).style(Style::default().bg(theme.background)),
+            rows[1 + row_idx],
+        );
+    }
+
+    if truncated {
+        let text = format!("… +{} more disks", app.latest.disks.len() - shown);
+        frame.render_widget(
+            Paragraph::new(text).style(Style::default().fg(theme.muted).bg(theme.background)),
+            rows[1 + shown],
         );
     }
 }
@@ -213,5 +362,49 @@ fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().bg(theme.background)
         };
         frame.render_widget(Paragraph::new(text).style(style), rows[1 + row_idx]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sub_kilobyte_has_no_decimal() {
+        assert_eq!(format_rate(0.0), "0 B/s");
+        assert_eq!(format_rate(512.0), "512 B/s");
+    }
+
+    #[test]
+    fn kilobyte_boundary_rounds_up_a_unit() {
+        assert_eq!(format_rate(1024.0), "1.0 KB/s");
+    }
+
+    #[test]
+    fn fractional_kilobytes_keep_one_decimal() {
+        assert_eq!(format_rate(1536.0), "1.5 KB/s");
+    }
+
+    #[test]
+    fn megabyte_and_gigabyte_units() {
+        assert_eq!(format_rate(1_048_576.0), "1.0 MB/s");
+        assert_eq!(format_rate(1_073_741_824.0), "1.0 GB/s");
+    }
+
+    #[test]
+    fn caps_at_terabytes_instead_of_growing_forever() {
+        let huge = 1024f64.powi(5);
+        assert_eq!(format_rate(huge), "1024.0 TB/s");
+    }
+
+    #[test]
+    fn fit_rows_reserves_a_truncation_row_when_over_capacity() {
+        assert_eq!(fit_rows(10, 4), (3, true));
+    }
+
+    #[test]
+    fn fit_rows_uses_full_list_when_it_fits() {
+        assert_eq!(fit_rows(3, 4), (3, false));
+        assert_eq!(fit_rows(4, 4), (4, false));
     }
 }
