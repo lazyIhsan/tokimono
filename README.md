@@ -14,7 +14,7 @@
 
 - **Real-time metrics** — CPU (per-core + aggregate), memory, swap, load averages
 - **Process management** — Sortable, filterable process table with kill/renice support
-- **Network & Disk I/O** — Live throughput, errors, and usage
+- **Network & Disk I/O** — Live per-interface throughput and per-disk usage/read/write rates
 - **Beautiful TUI** — Built with Ratatui for smooth rendering and modern terminal styling
 - **Async & efficient** — Powered by Tokio for responsive, low-overhead monitoring
 - **Keyboard-first** — Vim-like navigation + intuitive shortcuts
