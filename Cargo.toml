@@ -13,6 +13,7 @@ categories = ["command-line-utilities"]
 color-eyre = "0.6.5"
 crossterm = { version = "0.29.0", features = ["event-stream"] }
 futures-util = "0.3.32"
+libc = "0.2.186"
 ratatui = { version = "0.30.2", features = ["serde"] }
 serde = { version = "1.0.228", features = ["derive"] }
 sysinfo = "0.39.6"

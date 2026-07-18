@@ -23,6 +23,19 @@ fn process_refresh_kind() -> ProcessRefreshKind {
         .without_tasks()
 }
 
+/// Reads a process's current nice value via `getpriority(2)`. sysinfo exposes
+/// no nice/priority API at all, so this goes straight to libc. `getpriority`
+/// can legitimately return `-1` as a valid nice value, so errno has to be
+/// cleared and checked to tell that apart from a failed lookup (e.g. the
+/// process exited between listing and this call).
+fn read_nice(pid: u32) -> Option<i32> {
+    unsafe {
+        *libc::__errno_location() = 0;
+        let value = libc::getpriority(libc::PRIO_PROCESS, pid as libc::id_t);
+        (!(value == -1 && *libc::__errno_location() != 0)).then_some(value)
+    }
+}
+
 /// A single process's stats for one refresh cycle.
 #[derive(Clone)]
 pub struct ProcessInfo {
@@ -30,6 +43,9 @@ pub struct ProcessInfo {
     pub name: String,
     pub cpu_usage: f32,
     pub memory: u64,
+    /// `None` if the nice value couldn't be read (e.g. the process exited
+    /// between listing and the read).
+    pub nice: Option<i32>,
 }
 
 /// A network interface's throughput, in bytes/sec, since the last refresh.
@@ -111,6 +127,7 @@ impl Collector {
                 name: process.name().to_string_lossy().into_owned(),
                 cpu_usage: process.cpu_usage(),
                 memory: process.memory(),
+                nice: read_nice(pid.as_u32()),
             })
             .collect();
 
@@ -173,6 +190,20 @@ impl Collector {
     pub fn kill_process(&self, pid: u32, signal: Signal) -> bool {
         match self.system.process(Pid::from_u32(pid)) {
             Some(process) => process.kill_with(signal).unwrap_or(false),
+            None => false,
+        }
+    }
+
+    /// Adjusts a process's nice value by `delta`, clamped to the valid
+    /// range. Returns `false` if the current value couldn't be read or the
+    /// change was rejected (e.g. lowering nice/raising priority without
+    /// `CAP_SYS_NICE` — the same permission caveat as `kill_process`).
+    pub fn renice_process(&self, pid: u32, delta: i32) -> bool {
+        match read_nice(pid) {
+            Some(current) => {
+                let new_nice = (current + delta).clamp(-20, 19);
+                unsafe { libc::setpriority(libc::PRIO_PROCESS, pid as libc::id_t, new_nice) == 0 }
+            }
             None => false,
         }
     }
