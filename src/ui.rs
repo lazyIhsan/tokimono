@@ -70,7 +70,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     // Cap the CPU overview so the other left-column panels always keep some
     // room, even on machines with many cores.
     let core_rows = app.latest.cpu_usage_per_core.len().min(8) as u16;
-    let overview_len = core_rows + 1 /* summary row */ + 2 /* borders */;
+    let overview_len = core_rows + 2 /* summary rows */ + 2 /* borders */;
     let network_len = app.latest.networks.len().min(6) as u16 + 1 /* header row */ + 2 /* borders */;
     let [overview_area, network_area, disk_area] = Layout::vertical([
         Constraint::Length(overview_len),
@@ -97,17 +97,31 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
 fn draw_overview(frame: &mut Frame, app: &App, body: Rect) {
     let theme = &app.theme;
-    let cpu_summary = if app.latest.cpu_usage_per_core.is_empty() {
+    let cpu_line = if app.latest.cpu_usage_per_core.is_empty() {
         "collecting...".to_string()
     } else {
         let avg = app.latest.cpu_usage_per_core.iter().sum::<f32>()
             / app.latest.cpu_usage_per_core.len() as f32;
+        let load = &app.latest.load_avg;
         format!(
-            "CPU: {avg:.1}%  MEM: {:.1} / {:.1} GB",
-            app.latest.memory_used as f64 / 1_073_741_824.0,
-            app.latest.memory_total as f64 / 1_073_741_824.0,
+            "CPU: {avg:.1}%  LOAD: {:.2} {:.2} {:.2}",
+            load.one, load.five, load.fifteen,
         )
     };
+    let mem_line = format!(
+        "MEM: {:.1}/{:.1} GB  {}",
+        app.latest.memory_used as f64 / 1_073_741_824.0,
+        app.latest.memory_total as f64 / 1_073_741_824.0,
+        if app.latest.swap_total == 0 {
+            "SWAP: none".to_string()
+        } else {
+            format!(
+                "SWAP: {:.1}/{:.1} GB",
+                app.latest.swap_used as f64 / 1_073_741_824.0,
+                app.latest.swap_total as f64 / 1_073_741_824.0,
+            )
+        }
+    );
 
     let overview_block = Block::default()
         .borders(Borders::ALL)
@@ -117,10 +131,10 @@ fn draw_overview(frame: &mut Frame, app: &App, body: Rect) {
     frame.render_widget(overview_block, body);
 
     let n_cores = app.latest.cpu_usage_per_core.len();
-    let max_rows = inner.height.saturating_sub(1) as usize; // row 0 = summary
+    let max_rows = inner.height.saturating_sub(2) as usize; // rows 0-1 = summary
     let (shown_cores, truncated) = fit_rows(n_cores, max_rows);
 
-    let mut constraints = vec![Constraint::Length(1)];
+    let mut constraints = vec![Constraint::Length(1), Constraint::Length(1)];
     constraints.extend(std::iter::repeat_n(Constraint::Length(1), shown_cores));
     if truncated {
         constraints.push(Constraint::Length(1));
@@ -128,12 +142,16 @@ fn draw_overview(frame: &mut Frame, app: &App, body: Rect) {
     let rows = Layout::vertical(constraints).split(inner);
 
     frame.render_widget(
-        Paragraph::new(cpu_summary).style(Style::default().bg(theme.background)),
+        Paragraph::new(cpu_line).style(Style::default().bg(theme.background)),
         rows[0],
+    );
+    frame.render_widget(
+        Paragraph::new(mem_line).style(Style::default().bg(theme.background)),
+        rows[1],
     );
 
     for idx in 0..shown_cores {
-        let row = rows[1 + idx];
+        let row = rows[2 + idx];
         let pct = app
             .latest
             .cpu_usage_per_core
@@ -171,7 +189,7 @@ fn draw_overview(frame: &mut Frame, app: &App, body: Rect) {
         );
         frame.render_widget(
             Paragraph::new(text).style(Style::default().fg(theme.muted).bg(theme.background)),
-            rows[1 + shown_cores],
+            rows[2 + shown_cores],
         );
     }
 }

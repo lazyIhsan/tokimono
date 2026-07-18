@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use sysinfo::{Disks, Networks, Pid, ProcessesToUpdate, Signal, System};
+use sysinfo::{Disks, LoadAvg, Networks, Pid, ProcessesToUpdate, Signal, System};
 
 /// A single process's stats for one refresh cycle.
 #[derive(Clone)]
@@ -32,6 +32,9 @@ pub struct Snapshot {
     pub cpu_usage_per_core: Vec<f32>,
     pub memory_used: u64,
     pub memory_total: u64,
+    pub swap_used: u64,
+    pub swap_total: u64,
+    pub load_avg: LoadAvg,
     pub processes: Vec<ProcessInfo>,
     pub networks: Vec<NetworkInfo>,
     pub disks: Vec<DiskInfo>,
@@ -111,6 +114,9 @@ impl Collector {
             cpu_usage_per_core: self.system.cpus().iter().map(|c| c.cpu_usage()).collect(),
             memory_used: self.system.used_memory(),
             memory_total: self.system.total_memory(),
+            swap_used: self.system.used_swap(),
+            swap_total: self.system.total_swap(),
+            load_avg: System::load_average(),
             processes,
             networks,
             disks,
