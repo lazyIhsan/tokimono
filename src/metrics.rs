@@ -1,6 +1,27 @@
 use std::time::Instant;
 
-use sysinfo::{Components, Disks, LoadAvg, Networks, Pid, ProcessesToUpdate, Signal, System};
+use sysinfo::{
+    Components, Disks, LoadAvg, Networks, Pid, ProcessRefreshKind, ProcessesToUpdate, Signal,
+    System,
+};
+
+/// We only ever read pid/name/cpu/memory per process. sysinfo's
+/// `refresh_processes` convenience method fetches a lot more than that by
+/// default — notably per-thread task info, which on Linux means walking
+/// `/proc/<pid>/task/<tid>/` for every thread of every process. On a system
+/// with hundreds of processes (some heavily multi-threaded, e.g. browsers)
+/// that dwarfs everything else this collector does, so we ask for exactly
+/// what we use instead.
+///
+/// `ProcessRefreshKind::nothing()` still defaults `tasks` to `true` (that's
+/// sysinfo's own choice, not an oversight) so `.without_tasks()` is required
+/// even after starting from `nothing()`.
+fn process_refresh_kind() -> ProcessRefreshKind {
+    ProcessRefreshKind::nothing()
+        .with_cpu()
+        .with_memory()
+        .without_tasks()
+}
 
 /// A single process's stats for one refresh cycle.
 #[derive(Clone)]
@@ -55,7 +76,11 @@ pub struct Collector {
 impl Collector {
     pub fn new() -> Self {
         Self {
-            system: System::new_all(),
+            // `System::new_all()` would do a one-time full refresh here,
+            // including the same expensive per-thread task walk `refresh()`
+            // below avoids on every tick. Nothing reads this before the
+            // first tick's `refresh()` call populates it anyway.
+            system: System::new(),
             networks: Networks::new_with_refreshed_list(),
             disks: Disks::new_with_refreshed_list(),
             components: Components::new_with_refreshed_list(),
@@ -71,7 +96,11 @@ impl Collector {
 
         self.system.refresh_cpu_usage();
         self.system.refresh_memory();
-        self.system.refresh_processes(ProcessesToUpdate::All, true);
+        self.system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            process_refresh_kind(),
+        );
 
         let processes = self
             .system
