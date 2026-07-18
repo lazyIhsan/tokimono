@@ -73,7 +73,7 @@ impl App {
                     }
                 }
                 Event::Key(key) if key.kind == KeyEventKind::Press => self.on_key(key.code),
-                Event::Key(_) | Event::Resize(..) => {}
+                Event::Key(_) | Event::Resize => {}
             }
         }
 

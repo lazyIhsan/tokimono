@@ -11,7 +11,7 @@ pub enum Event {
     /// A key press from the terminal.
     Key(KeyEvent),
     /// The terminal window was resized.
-    Resize(u16, u16),
+    Resize,
 }
 
 /// Merges terminal input and a refresh timer into a single event stream.
@@ -35,7 +35,7 @@ impl EventHandler {
             _ = self.tick.tick() => Ok(Event::Tick),
             maybe_event = self.reader.next() => match maybe_event {
                 Some(Ok(CrosstermEvent::Key(key))) => Ok(Event::Key(key)),
-                Some(Ok(CrosstermEvent::Resize(w, h))) => Ok(Event::Resize(w, h)),
+                Some(Ok(CrosstermEvent::Resize(..))) => Ok(Event::Resize),
                 Some(Ok(_)) => Ok(Event::Tick),
                 Some(Err(err)) => Err(err.into()),
                 None => Ok(Event::Tick),
