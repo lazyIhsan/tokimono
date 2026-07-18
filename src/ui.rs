@@ -86,8 +86,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     let footer_text = if let Some(pid) = app.confirm_kill {
         format!("Kill PID {pid}? y = confirm, any other key = cancel")
+    } else if let Some(buf) = &app.filter_input {
+        format!("Filter: {buf}█  Enter: apply  Esc: cancel")
     } else {
-        "q: quit  j/k: select  c/m/p/n: sort  x: kill".to_string()
+        "q: quit  j/k: select  c/m/p/n: sort  /: filter  x: kill  [ ]: nice".to_string()
     };
     frame.render_widget(
         Paragraph::new(footer_text).style(Style::default().fg(theme.muted).bg(theme.background)),
@@ -323,12 +325,23 @@ fn sort_label(key: SortKey) -> &'static str {
 
 fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
+    let visible = app.filtered_processes();
     let dir = if app.sort_desc { "↓" } else { "↑" };
-    let title = format!(
-        "Processes ({} {dir}, {} total)",
-        sort_label(app.sort_key),
-        app.latest.processes.len()
-    );
+    let title = if app.filter.is_empty() {
+        format!(
+            "Processes ({} {dir}, {} total)",
+            sort_label(app.sort_key),
+            visible.len()
+        )
+    } else {
+        format!(
+            "Processes ({} {dir}, {}/{} matching \"{}\")",
+            sort_label(app.sort_key),
+            visible.len(),
+            app.latest.processes.len(),
+            app.filter,
+        )
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
@@ -343,20 +356,23 @@ fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
     let rows_available = inner.height.saturating_sub(1) as usize; // row 0 = column header
     let selected_idx = app
         .selected_pid
-        .and_then(|pid| app.latest.processes.iter().position(|p| p.pid == pid))
+        .and_then(|pid| visible.iter().position(|p| p.pid == pid))
         .unwrap_or(0);
     let start = if selected_idx >= rows_available {
         selected_idx + 1 - rows_available
     } else {
         0
     };
-    let end = (start + rows_available).min(app.latest.processes.len());
+    let end = (start + rows_available).min(visible.len());
 
     let constraints =
         std::iter::repeat_n(Constraint::Length(1), 1 + (end - start)).collect::<Vec<_>>();
     let rows = Layout::vertical(constraints).split(inner);
 
-    let header = format!("{:>7} {:<24.24} {:>7} {:>10}", "PID", "NAME", "CPU%", "MEM");
+    let header = format!(
+        "{:>7} {:<24.24} {:>7} {:>10} {:>5}",
+        "PID", "NAME", "CPU%", "MEM", "NICE"
+    );
     frame.render_widget(
         Paragraph::new(header).style(
             Style::default()
@@ -366,14 +382,19 @@ fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
         rows[0],
     );
 
-    for (row_idx, process) in app.latest.processes[start..end].iter().enumerate() {
+    for (row_idx, process) in visible[start..end].iter().enumerate() {
         let is_selected = Some(process.pid) == app.selected_pid;
+        let nice = process
+            .nice
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "-".to_string());
         let text = format!(
-            "{:>7} {:<24.24} {:>6.1}% {:>9.1}M",
+            "{:>7} {:<24.24} {:>6.1}% {:>9.1}M {:>5}",
             process.pid,
             process.name,
             process.cpu_usage,
             process.memory as f64 / 1_048_576.0,
+            nice,
         );
         let style = if is_selected {
             Style::default()

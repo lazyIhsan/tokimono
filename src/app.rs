@@ -7,7 +7,7 @@ use sysinfo::Signal;
 
 use crate::config::{Config, Theme};
 use crate::event::{Event, EventHandler};
-use crate::metrics::{Collector, Snapshot};
+use crate::metrics::{Collector, ProcessInfo, Snapshot};
 use crate::ui;
 
 const HISTORY_CAP: usize = 240;
@@ -30,6 +30,10 @@ pub struct App {
     pub sort_desc: bool,
     pub selected_pid: Option<u32>,
     pub confirm_kill: Option<u32>,
+    /// Committed/active process filter. Empty means no filter.
+    pub filter: String,
+    /// `Some(buf)` while the filter text box is being edited.
+    pub filter_input: Option<String>,
     pub theme: Theme,
     tick_rate: Duration,
 }
@@ -56,6 +60,8 @@ impl App {
             sort_desc: true,
             selected_pid: None,
             confirm_kill: None,
+            filter: String::new(),
+            filter_input: None,
             theme: config.theme,
             tick_rate: config.tick_rate,
         }
@@ -98,6 +104,28 @@ impl App {
             return;
         }
 
+        if self.filter_input.is_some() {
+            match code {
+                KeyCode::Enter => {
+                    self.filter = self.filter_input.take().unwrap_or_default();
+                    self.reconcile_selection();
+                }
+                KeyCode::Esc => self.filter_input = None,
+                KeyCode::Backspace => {
+                    if let Some(buf) = &mut self.filter_input {
+                        buf.pop();
+                    }
+                }
+                KeyCode::Char(c) => {
+                    if let Some(buf) = &mut self.filter_input {
+                        buf.push(c);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
         match code {
             KeyCode::Char('q') | KeyCode::Esc => self.running = false,
             KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
@@ -107,7 +135,16 @@ impl App {
             KeyCode::Char('p') => self.set_sort(SortKey::Pid),
             KeyCode::Char('n') => self.set_sort(SortKey::Name),
             KeyCode::Char('x') => self.confirm_kill = self.selected_pid,
+            KeyCode::Char('/') => self.filter_input = Some(self.filter.clone()),
+            KeyCode::Char('[') => self.renice_selected(-1),
+            KeyCode::Char(']') => self.renice_selected(1),
             _ => {}
+        }
+    }
+
+    fn renice_selected(&mut self, delta: i32) {
+        if let Some(pid) = self.selected_pid {
+            self.collector.renice_process(pid, delta);
         }
     }
 
@@ -134,27 +171,80 @@ impl App {
         });
     }
 
-    /// Keeps the selection on a valid process, defaulting to the top row
-    /// once the previously selected pid disappears (e.g. it exited).
+    /// Keeps the selection on a valid, currently-visible process, defaulting
+    /// to the top row once the previous selection disappears (killed, or
+    /// filtered out).
     fn reconcile_selection(&mut self) {
+        let visible = self.filtered_processes();
         let still_present = self
             .selected_pid
-            .is_some_and(|pid| self.latest.processes.iter().any(|p| p.pid == pid));
+            .is_some_and(|pid| visible.iter().any(|p| p.pid == pid));
         if !still_present {
-            self.selected_pid = self.latest.processes.first().map(|p| p.pid);
+            self.selected_pid = visible.first().map(|p| p.pid);
         }
     }
 
     fn move_selection(&mut self, delta: i32) {
-        if self.latest.processes.is_empty() {
+        let visible = self.filtered_processes();
+        if visible.is_empty() {
             return;
         }
         let current = self
             .selected_pid
-            .and_then(|pid| self.latest.processes.iter().position(|p| p.pid == pid))
+            .and_then(|pid| visible.iter().position(|p| p.pid == pid))
             .unwrap_or(0);
-        let len = self.latest.processes.len() as i32;
+        let len = visible.len() as i32;
         let next = (current as i32 + delta).clamp(0, len - 1);
-        self.selected_pid = Some(self.latest.processes[next as usize].pid);
+        self.selected_pid = Some(visible[next as usize].pid);
+    }
+
+    /// Processes matching the active filter, in current sort order. Empty
+    /// filter matches everything.
+    pub fn filtered_processes(&self) -> Vec<&ProcessInfo> {
+        self.latest
+            .processes
+            .iter()
+            .filter(|p| process_matches(p, &self.filter))
+            .collect()
+    }
+}
+
+/// Case-insensitive substring match on name, or substring match on pid.
+fn process_matches(process: &ProcessInfo, filter: &str) -> bool {
+    filter.is_empty()
+        || process.name.to_lowercase().contains(&filter.to_lowercase())
+        || process.pid.to_string().contains(filter)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn process(pid: u32, name: &str) -> ProcessInfo {
+        ProcessInfo {
+            pid,
+            name: name.to_string(),
+            cpu_usage: 0.0,
+            memory: 0,
+            nice: None,
+        }
+    }
+
+    #[test]
+    fn empty_filter_matches_everything() {
+        assert!(process_matches(&process(1, "firefox"), ""));
+    }
+
+    #[test]
+    fn name_match_is_case_insensitive_substring() {
+        assert!(process_matches(&process(1, "Firefox"), "fire"));
+        assert!(process_matches(&process(1, "Firefox"), "FIRE"));
+        assert!(!process_matches(&process(1, "Firefox"), "chrome"));
+    }
+
+    #[test]
+    fn pid_match_is_substring() {
+        assert!(process_matches(&process(12345, "sh"), "234"));
+        assert!(!process_matches(&process(12345, "sh"), "999"));
     }
 }
