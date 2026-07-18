@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use sysinfo::{Disks, LoadAvg, Networks, Pid, ProcessesToUpdate, Signal, System};
+use sysinfo::{Components, Disks, LoadAvg, Networks, Pid, ProcessesToUpdate, Signal, System};
 
 /// A single process's stats for one refresh cycle.
 #[derive(Clone)]
@@ -35,6 +35,9 @@ pub struct Snapshot {
     pub swap_used: u64,
     pub swap_total: u64,
     pub load_avg: LoadAvg,
+    /// Hottest reading across all temperature sensors, in °C. `None` when
+    /// the system exposes no sensors (common in VMs/containers).
+    pub cpu_temp: Option<f32>,
     pub processes: Vec<ProcessInfo>,
     pub networks: Vec<NetworkInfo>,
     pub disks: Vec<DiskInfo>,
@@ -45,6 +48,7 @@ pub struct Collector {
     system: System,
     networks: Networks,
     disks: Disks,
+    components: Components,
     last_refresh: Instant,
 }
 
@@ -54,6 +58,7 @@ impl Collector {
             system: System::new_all(),
             networks: Networks::new_with_refreshed_list(),
             disks: Disks::new_with_refreshed_list(),
+            components: Components::new_with_refreshed_list(),
             last_refresh: Instant::now(),
         }
     }
@@ -110,6 +115,15 @@ impl Collector {
             .collect();
         disks.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
 
+        self.components.refresh(true);
+        let cpu_temp = self
+            .components
+            .iter()
+            .filter_map(|c| c.temperature())
+            .fold(None, |hottest: Option<f32>, t| {
+                Some(hottest.map_or(t, |h| h.max(t)))
+            });
+
         Snapshot {
             cpu_usage_per_core: self.system.cpus().iter().map(|c| c.cpu_usage()).collect(),
             memory_used: self.system.used_memory(),
@@ -117,6 +131,7 @@ impl Collector {
             swap_used: self.system.used_swap(),
             swap_total: self.system.total_swap(),
             load_avg: System::load_average(),
+            cpu_temp,
             processes,
             networks,
             disks,

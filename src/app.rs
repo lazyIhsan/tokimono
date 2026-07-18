@@ -46,6 +46,7 @@ impl App {
                 swap_used: 0,
                 swap_total: 0,
                 load_avg: Default::default(),
+                cpu_temp: None,
                 processes: Vec::new(),
                 networks: Vec::new(),
                 disks: Vec::new(),

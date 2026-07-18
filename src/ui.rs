@@ -103,8 +103,12 @@ fn draw_overview(frame: &mut Frame, app: &App, body: Rect) {
         let avg = app.latest.cpu_usage_per_core.iter().sum::<f32>()
             / app.latest.cpu_usage_per_core.len() as f32;
         let load = &app.latest.load_avg;
+        let temp = match app.latest.cpu_temp {
+            Some(t) => format!(" {t:.0}°C"),
+            None => String::new(),
+        };
         format!(
-            "CPU: {avg:.1}%  LOAD: {:.2} {:.2} {:.2}",
+            "CPU: {avg:.1}%{temp}  LOAD: {:.2} {:.2} {:.2}",
             load.one, load.five, load.fifteen,
         )
     };
