@@ -54,6 +54,7 @@ impl App {
                 processes: Vec::new(),
                 networks: Vec::new(),
                 disks: Vec::new(),
+                gpus: Vec::new(),
             },
             cpu_history: VecDeque::new(),
             sort_key: SortKey::Cpu,

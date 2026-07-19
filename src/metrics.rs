@@ -1,5 +1,7 @@
 use std::time::Instant;
 
+use nvml_wrapper::Nvml;
+use nvml_wrapper::enum_wrappers::device::TemperatureSensor;
 use sysinfo::{
     Components, Disks, LoadAvg, Networks, Pid, ProcessRefreshKind, ProcessesToUpdate, Signal,
     System,
@@ -64,6 +66,16 @@ pub struct DiskInfo {
     pub write_rate: f64,
 }
 
+/// An NVIDIA GPU's live stats for one refresh cycle.
+pub struct GpuInfo {
+    pub name: String,
+    pub utilization_pct: f32,
+    pub memory_used: u64,
+    pub memory_total: u64,
+    /// `None` if the device has no readable temperature sensor.
+    pub temp: Option<f32>,
+}
+
 /// A snapshot of system metrics for one refresh cycle.
 pub struct Snapshot {
     pub cpu_usage_per_core: Vec<f32>,
@@ -78,6 +90,35 @@ pub struct Snapshot {
     pub processes: Vec<ProcessInfo>,
     pub networks: Vec<NetworkInfo>,
     pub disks: Vec<DiskInfo>,
+    pub gpus: Vec<GpuInfo>,
+}
+
+/// Reads every NVIDIA GPU's current stats. Best-effort: a device that
+/// errors on an individual read (e.g. transient driver hiccup) is skipped
+/// rather than aborting the whole list.
+fn collect_gpus(nvml: &Nvml) -> Vec<GpuInfo> {
+    let Ok(count) = nvml.device_count() else {
+        return Vec::new();
+    };
+    (0..count)
+        .filter_map(|i| {
+            let device = nvml.device_by_index(i).ok()?;
+            let memory = device.memory_info().ok()?;
+            Some(GpuInfo {
+                name: device.name().unwrap_or_else(|_| "GPU".to_string()),
+                utilization_pct: device
+                    .utilization_rates()
+                    .map(|u| u.gpu as f32)
+                    .unwrap_or(0.0),
+                memory_used: memory.used,
+                memory_total: memory.total,
+                temp: device
+                    .temperature(TemperatureSensor::Gpu)
+                    .ok()
+                    .map(|t| t as f32),
+            })
+        })
+        .collect()
 }
 
 /// Owns the sysinfo handles and refreshes them on demand.
@@ -86,6 +127,12 @@ pub struct Collector {
     networks: Networks,
     disks: Disks,
     components: Components,
+    /// `None` on machines with no NVIDIA driver/library present — sysinfo
+    /// has no GPU API at all, so this talks to libnvidia-ml.so directly via
+    /// nvml-wrapper, which loads it at runtime (not link time), so this
+    /// stays `None` gracefully rather than failing the build or panicking
+    /// on GPU-less machines.
+    nvml: Option<Nvml>,
     last_refresh: Instant,
 }
 
@@ -100,6 +147,7 @@ impl Collector {
             networks: Networks::new_with_refreshed_list(),
             disks: Disks::new_with_refreshed_list(),
             components: Components::new_with_refreshed_list(),
+            nvml: Nvml::init().ok(),
             last_refresh: Instant::now(),
         }
     }
@@ -170,6 +218,10 @@ impl Collector {
                 Some(hottest.map_or(t, |h| h.max(t)))
             });
 
+        // Unlike Networks/Disks, NVML has no separate refresh step — each
+        // accessor below reads current data directly.
+        let gpus = self.nvml.as_ref().map(collect_gpus).unwrap_or_default();
+
         Snapshot {
             cpu_usage_per_core: self.system.cpus().iter().map(|c| c.cpu_usage()).collect(),
             memory_used: self.system.used_memory(),
@@ -181,6 +233,7 @@ impl Collector {
             processes,
             networks,
             disks,
+            gpus,
         }
     }
 
