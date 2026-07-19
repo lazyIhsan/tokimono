@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use nvml_wrapper::Nvml;
 use nvml_wrapper::enum_wrappers::device::TemperatureSensor;
+use nvml_wrapper::error::NvmlError;
 use sysinfo::{
     Components, Disks, LoadAvg, Networks, Pid, ProcessRefreshKind, ProcessesToUpdate, Signal,
     System,
@@ -91,6 +92,27 @@ pub struct Snapshot {
     pub networks: Vec<NetworkInfo>,
     pub disks: Vec<DiskInfo>,
     pub gpus: Vec<GpuInfo>,
+    /// `Some` only when NVIDIA hardware/driver was detected but something's
+    /// actually wrong (e.g. the kernel module isn't loaded) — worth telling
+    /// the user about. `None` both when everything's fine *and* when there's
+    /// simply no NVIDIA presence at all (the common case, not worth a
+    /// permanent warning box for).
+    pub gpu_error: Option<String>,
+}
+
+/// Initializes NVML, distinguishing "no NVIDIA hardware/driver present at
+/// all" (the overwhelming majority of machines — stay silent, same as
+/// `cpu_temp` on sensorless VMs) from "NVIDIA is present but something's
+/// actually wrong" (e.g. the kernel module isn't loaded after a kernel
+/// update, or a permissions issue) — the latter is worth surfacing rather
+/// than silently hiding the panel, since it means there's a real GPU the
+/// user would expect to see data for.
+fn init_nvml() -> (Option<Nvml>, Option<String>) {
+    match Nvml::init() {
+        Ok(nvml) => (Some(nvml), None),
+        Err(NvmlError::LibloadingError(_)) | Err(NvmlError::LibraryNotFound) => (None, None),
+        Err(err) => (None, Some(err.to_string())),
+    }
 }
 
 /// Reads every NVIDIA GPU's current stats. Best-effort: a device that
@@ -133,11 +155,16 @@ pub struct Collector {
     /// stays `None` gracefully rather than failing the build or panicking
     /// on GPU-less machines.
     nvml: Option<Nvml>,
+    /// See `init_nvml`. Captured once at startup, not re-checked each tick —
+    /// a fixed driver problem needs a restart to notice anyway, same as
+    /// every other one-time handle here.
+    nvml_error: Option<String>,
     last_refresh: Instant,
 }
 
 impl Collector {
     pub fn new() -> Self {
+        let (nvml, nvml_error) = init_nvml();
         Self {
             // `System::new_all()` would do a one-time full refresh here,
             // including the same expensive per-thread task walk `refresh()`
@@ -147,7 +174,8 @@ impl Collector {
             networks: Networks::new_with_refreshed_list(),
             disks: Disks::new_with_refreshed_list(),
             components: Components::new_with_refreshed_list(),
-            nvml: Nvml::init().ok(),
+            nvml,
+            nvml_error,
             last_refresh: Instant::now(),
         }
     }
@@ -234,6 +262,7 @@ impl Collector {
             networks,
             disks,
             gpus,
+            gpu_error: self.nvml_error.clone(),
         }
     }
 

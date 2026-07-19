@@ -55,6 +55,7 @@ impl App {
                 networks: Vec::new(),
                 disks: Vec::new(),
                 gpus: Vec::new(),
+                gpu_error: None,
             },
             cpu_history: VecDeque::new(),
             sort_key: SortKey::Cpu,
