@@ -136,6 +136,35 @@ fn preset_theme(name: &str) -> Option<Theme> {
             selection_bg: hex(0xd5c4a1), // bg2
             selection_fg: hex(0x3c3836), // fg1
         }),
+        // Kanagawa's Wave variant — Dragon/Lotus aren't included since their
+        // hue families genuinely differ (not just background darkness) and
+        // aren't worth guessing at without a definitive source to check
+        // against.
+        "kanagawa" | "kanagawa-wave" => Some(Theme {
+            background: Color::Reset,
+            accent: hex(0x7e9cd8),       // crystalBlue
+            cpu_low: hex(0x76946a),      // autumnGreen
+            cpu_mid: hex(0xdca561),      // autumnYellow
+            cpu_high: hex(0xc34043),     // autumnRed
+            muted: hex(0x727169),        // fujiGray
+            selection_bg: hex(0x2d4f67), // waveBlue2
+            selection_fg: hex(0xdcd7ba), // fujiWhite
+        }),
+        // Tokyo Night's Storm/Night/Moon variants share this exact accent
+        // palette and only differ in background darkness, which tokimono
+        // presets don't set — so there's nothing distinct to alias those
+        // names to. Day (light) isn't included here for the same
+        // confidence reason as Kanagawa's Dragon/Lotus above.
+        "tokyo-night" | "tokyonight" | "tokyo-night-storm" => Some(Theme {
+            background: Color::Reset,
+            accent: hex(0x7aa2f7),       // blue
+            cpu_low: hex(0x9ece6a),      // green
+            cpu_mid: hex(0xe0af68),      // yellow
+            cpu_high: hex(0xf7768e),     // red
+            muted: hex(0x565f89),        // comment
+            selection_bg: hex(0x364a82), // visual selection
+            selection_fg: hex(0xc0caf5), // fg
+        }),
         _ => None,
     }
 }
@@ -230,6 +259,8 @@ mod tests {
             "catppuccin-latte",
             "gruvbox-dark",
             "gruvbox-light",
+            "kanagawa-wave",
+            "tokyo-night-storm",
         ] {
             assert!(preset_theme(name).is_some(), "{name} should resolve");
         }
@@ -239,6 +270,23 @@ mod tests {
     fn bare_family_names_alias_to_a_default_flavor() {
         assert!(preset_theme("catppuccin").is_some());
         assert!(preset_theme("gruvbox").is_some());
+        assert!(preset_theme("kanagawa").is_some());
+        assert!(preset_theme("tokyo-night").is_some());
+        assert!(preset_theme("tokyonight").is_some());
+    }
+
+    #[test]
+    fn tokyo_night_variant_aliases_share_the_same_accent_palette() {
+        // Storm/Night/Moon only differ in background darkness upstream,
+        // which tokimono presets don't set — confirm all the aliases we do
+        // support actually resolve to the identical accent set rather than
+        // silently drifting apart if someone edits one arm later.
+        let storm = preset_theme("tokyo-night-storm").unwrap();
+        let bare = preset_theme("tokyo-night").unwrap();
+        let alt = preset_theme("tokyonight").unwrap();
+        assert_eq!(storm.accent, bare.accent);
+        assert_eq!(storm.accent, alt.accent);
+        assert_eq!(storm.cpu_high, bare.cpu_high);
     }
 
     #[test]
@@ -254,7 +302,13 @@ mod tests {
 
     #[test]
     fn presets_never_override_the_transparent_background_default() {
-        for name in ["catppuccin-mocha", "gruvbox-dark", "gruvbox-light"] {
+        for name in [
+            "catppuccin-mocha",
+            "gruvbox-dark",
+            "gruvbox-light",
+            "kanagawa-wave",
+            "tokyo-night-storm",
+        ] {
             let theme = preset_theme(name).unwrap();
             assert_eq!(theme.background, Color::Reset);
         }
