@@ -12,7 +12,7 @@
 
 ## ✨ Features
 
-- **Real-time metrics** — CPU (per-core + aggregate), memory, swap, load averages
+- **Real-time metrics** — CPU (per-core + aggregate), memory, swap, load averages, NVIDIA GPU utilization/memory/temp
 - **Process management** — Sortable, filterable process table with kill/renice support
 - **Network & Disk I/O** — Live per-interface throughput and per-disk usage/read/write rates
 - **Beautiful TUI** — Built with Ratatui for smooth rendering and modern terminal styling

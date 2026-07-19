@@ -71,15 +71,25 @@ pub fn draw(frame: &mut Frame, app: &App) {
     // room, even on machines with many cores.
     let core_rows = app.latest.cpu_usage_per_core.len().min(8) as u16;
     let overview_len = core_rows + 2 /* summary rows */ + 2 /* borders */;
+    // No border box at all when there are no GPUs (the common case) rather
+    // than reserving space for an empty panel — draw_gpu's own zero-height
+    // guard means a Length(0) area here just isn't rendered.
+    let gpu_len = if app.latest.gpus.is_empty() {
+        0
+    } else {
+        app.latest.gpus.len().min(4) as u16 + 1 /* header row */ + 2 /* borders */
+    };
     let network_len = app.latest.networks.len().min(6) as u16 + 1 /* header row */ + 2 /* borders */;
-    let [overview_area, network_area, disk_area] = Layout::vertical([
+    let [overview_area, gpu_area, network_area, disk_area] = Layout::vertical([
         Constraint::Length(overview_len),
+        Constraint::Length(gpu_len),
         Constraint::Length(network_len),
         Constraint::Min(0),
     ])
     .areas(left);
 
     draw_overview(frame, app, overview_area);
+    draw_gpu(frame, app, gpu_area);
     draw_network(frame, app, network_area);
     draw_disk(frame, app, disk_area);
     draw_processes(frame, app, right);
@@ -196,6 +206,67 @@ fn draw_overview(frame: &mut Frame, app: &App, body: Rect) {
         frame.render_widget(
             Paragraph::new(text).style(Style::default().fg(theme.muted).bg(theme.background)),
             rows[2 + shown_cores],
+        );
+    }
+}
+
+fn draw_gpu(frame: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("GPU")
+        .style(Style::default().bg(theme.background));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if inner.height == 0 {
+        return;
+    }
+
+    let rows_available = inner.height.saturating_sub(1) as usize; // row 0 = header
+    let (shown, truncated) = fit_rows(app.latest.gpus.len(), rows_available);
+
+    let constraints = std::iter::repeat_n(Constraint::Length(1), 1 + shown + truncated as usize)
+        .collect::<Vec<_>>();
+    let rows = Layout::vertical(constraints).split(inner);
+
+    let header = format!(
+        "{:<10.10} {:>5} {:>9}/{:<9} {:>5}",
+        "NAME", "UTIL", "MEM", "TOTAL", "TEMP"
+    );
+    frame.render_widget(
+        Paragraph::new(header).style(
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .bg(theme.background),
+        ),
+        rows[0],
+    );
+
+    for (row_idx, gpu) in app.latest.gpus.iter().take(shown).enumerate() {
+        let temp = match gpu.temp {
+            Some(t) => format!("{t:.0}°C"),
+            None => "-".to_string(),
+        };
+        let text = format!(
+            "{:<10.10} {:>4.0}% {:>9}/{:<9} {:>5}",
+            gpu.name,
+            gpu.utilization_pct,
+            format_bytes_value(gpu.memory_used as f64),
+            format_bytes_value(gpu.memory_total as f64),
+            temp,
+        );
+        frame.render_widget(
+            Paragraph::new(text).style(Style::default().bg(theme.background)),
+            rows[1 + row_idx],
+        );
+    }
+
+    if truncated {
+        let text = format!("… +{} more GPUs", app.latest.gpus.len() - shown);
+        frame.render_widget(
+            Paragraph::new(text).style(Style::default().fg(theme.muted).bg(theme.background)),
+            rows[1 + shown],
         );
     }
 }
