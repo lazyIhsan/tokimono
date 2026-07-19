@@ -71,13 +71,18 @@ pub fn draw(frame: &mut Frame, app: &App) {
     // room, even on machines with many cores.
     let core_rows = app.latest.cpu_usage_per_core.len().min(8) as u16;
     let overview_len = core_rows + 2 /* summary rows */ + 2 /* borders */;
-    // No border box at all when there are no GPUs (the common case) rather
-    // than reserving space for an empty panel — draw_gpu's own zero-height
-    // guard means a Length(0) area here just isn't rendered.
-    let gpu_len = if app.latest.gpus.is_empty() {
-        0
-    } else {
+    // No border box at all when there are no GPUs and nothing's wrong (the
+    // common case — most machines have no NVIDIA hardware) rather than
+    // reserving space for an empty panel — draw_gpu's own zero-height guard
+    // means a Length(0) area here just isn't rendered. A single status row
+    // when NVIDIA is present but something's actually broken (e.g. the
+    // kernel module isn't loaded), since that's worth surfacing.
+    let gpu_len = if !app.latest.gpus.is_empty() {
         app.latest.gpus.len().min(4) as u16 + 1 /* header row */ + 2 /* borders */
+    } else if app.latest.gpu_error.is_some() {
+        1 + 2 /* borders */
+    } else {
+        0
     };
     let network_len = app.latest.networks.len().min(6) as u16 + 1 /* header row */ + 2 /* borders */;
     let [overview_area, gpu_area, network_area, disk_area] = Layout::vertical([
@@ -220,6 +225,17 @@ fn draw_gpu(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(block, area);
 
     if inner.height == 0 {
+        return;
+    }
+
+    if app.latest.gpus.is_empty() {
+        if let Some(err) = &app.latest.gpu_error {
+            frame.render_widget(
+                Paragraph::new(format!("NVIDIA error: {err}"))
+                    .style(Style::default().fg(theme.cpu_high).bg(theme.background)),
+                inner,
+            );
+        }
         return;
     }
 
