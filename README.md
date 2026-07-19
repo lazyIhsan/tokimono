@@ -63,4 +63,4 @@ Set `preset` under `[theme]` to start from a named palette instead of the plain 
 preset = "catppuccin-mocha"
 ```
 
-Available presets: `catppuccin-mocha` (or just `catppuccin`), `catppuccin-macchiato`, `catppuccin-frappe`, `catppuccin-latte`, `gruvbox-dark` (or just `gruvbox`), `gruvbox-light`. Presets only set the accent/status colors — `background` still defaults to `"reset"` for every preset, preserving terminal transparency.
+Available presets: `catppuccin-mocha` (or just `catppuccin`), `catppuccin-macchiato`, `catppuccin-frappe`, `catppuccin-latte`, `gruvbox-dark` (or just `gruvbox`), `gruvbox-light`, `kanagawa-wave` (or just `kanagawa`), `tokyo-night-storm` (or just `tokyo-night`/`tokyonight`). Presets only set the accent/status colors — `background` still defaults to `"reset"` for every preset, preserving terminal transparency.

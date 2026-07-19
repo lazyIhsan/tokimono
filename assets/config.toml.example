@@ -17,7 +17,8 @@
 #
 # Available presets: catppuccin-mocha (or just "catppuccin"),
 # catppuccin-macchiato, catppuccin-frappe, catppuccin-latte, gruvbox-dark
-# (or just "gruvbox"), gruvbox-light.
+# (or just "gruvbox"), gruvbox-light, kanagawa-wave (or just "kanagawa"),
+# tokyo-night-storm (or just "tokyo-night"/"tokyonight").
 # preset = "catppuccin-mocha"
 
 # Colors accept a named color (black, red, green, yellow, blue, magenta,
