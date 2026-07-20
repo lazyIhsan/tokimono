@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Instant;
 
 use nvml_wrapper::Nvml;
@@ -38,6 +39,15 @@ fn read_nice(pid: u32) -> Option<i32> {
         (!(value == -1 && *libc::__errno_location() != 0)).then_some(value)
     }
 }
+
+/// Nice values essentially never change on their own — only via explicit
+/// renice — so reading them for every process on every tick is wasted
+/// syscalls. Confirmed via `strace -f -c` profiling: `getpriority` was ~5%
+/// of per-process syscall volume, dwarfed by sysinfo's own CPU/memory
+/// reads (which can't be slowed without hurting the app's core "see what's
+/// eating my CPU right now" purpose). Refresh nice values at 1/4 the tick
+/// rate instead, caching the rest.
+const NICE_REFRESH_EVERY_N_TICKS: u32 = 4;
 
 /// A single process's stats for one refresh cycle.
 #[derive(Clone)]
@@ -159,6 +169,11 @@ pub struct Collector {
     /// a fixed driver problem needs a restart to notice anyway, same as
     /// every other one-time handle here.
     nvml_error: Option<String>,
+    /// Last known nice value per pid, rebuilt from scratch every
+    /// `NICE_REFRESH_EVERY_N_TICKS` ticks (which also prunes dead pids) and
+    /// read from on the ticks in between. See `NICE_REFRESH_EVERY_N_TICKS`.
+    nice_cache: HashMap<u32, i32>,
+    tick_count: u32,
     last_refresh: Instant,
 }
 
@@ -176,6 +191,8 @@ impl Collector {
             components: Components::new_with_refreshed_list(),
             nvml,
             nvml_error,
+            nice_cache: HashMap::new(),
+            tick_count: 0,
             last_refresh: Instant::now(),
         }
     }
@@ -194,18 +211,51 @@ impl Collector {
             process_refresh_kind(),
         );
 
-        let processes = self
+        // Split into two passes so nice-value caching only ever touches
+        // self.nice_cache, never self.system — keeps the borrow trivially
+        // obvious rather than relying on the compiler seeing through a
+        // single combined closure.
+        let base_processes: Vec<(u32, String, f32, u64)> = self
             .system
             .processes()
             .iter()
-            .map(|(pid, process)| ProcessInfo {
-                pid: pid.as_u32(),
-                name: process.name().to_string_lossy().into_owned(),
-                cpu_usage: process.cpu_usage(),
-                memory: process.memory(),
-                nice: read_nice(pid.as_u32()),
+            .map(|(pid, process)| {
+                (
+                    pid.as_u32(),
+                    process.name().to_string_lossy().into_owned(),
+                    process.cpu_usage(),
+                    process.memory(),
+                )
             })
             .collect();
+
+        let refresh_nice = self.tick_count.is_multiple_of(NICE_REFRESH_EVERY_N_TICKS);
+        self.tick_count = self.tick_count.wrapping_add(1);
+        let mut next_nice_cache = HashMap::with_capacity(base_processes.len());
+        let processes = base_processes
+            .into_iter()
+            .map(|(pid, name, cpu_usage, memory)| {
+                let nice = if refresh_nice {
+                    let value = read_nice(pid);
+                    if let Some(v) = value {
+                        next_nice_cache.insert(pid, v);
+                    }
+                    value
+                } else {
+                    self.nice_cache.get(&pid).copied()
+                };
+                ProcessInfo {
+                    pid,
+                    name,
+                    cpu_usage,
+                    memory,
+                    nice,
+                }
+            })
+            .collect();
+        if refresh_nice {
+            self.nice_cache = next_nice_cache;
+        }
 
         self.networks.refresh(true);
         let mut networks: Vec<NetworkInfo> = self
@@ -279,12 +329,21 @@ impl Collector {
     /// Adjusts a process's nice value by `delta`, clamped to the valid
     /// range. Returns `false` if the current value couldn't be read or the
     /// change was rejected (e.g. lowering nice/raising priority without
-    /// `CAP_SYS_NICE` — the same permission caveat as `kill_process`).
-    pub fn renice_process(&self, pid: u32, delta: i32) -> bool {
+    /// `CAP_SYS_NICE` — the same permission caveat as `kill_process`). On
+    /// success, writes the new value straight into `nice_cache` so it shows
+    /// up on the very next tick rather than waiting for the next full
+    /// nice-value refresh.
+    pub fn renice_process(&mut self, pid: u32, delta: i32) -> bool {
         match read_nice(pid) {
             Some(current) => {
                 let new_nice = (current + delta).clamp(-20, 19);
-                unsafe { libc::setpriority(libc::PRIO_PROCESS, pid as libc::id_t, new_nice) == 0 }
+                let ok = unsafe {
+                    libc::setpriority(libc::PRIO_PROCESS, pid as libc::id_t, new_nice) == 0
+                };
+                if ok {
+                    self.nice_cache.insert(pid, new_nice);
+                }
+                ok
             }
             None => false,
         }
