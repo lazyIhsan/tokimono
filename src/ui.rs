@@ -104,7 +104,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
     } else if let Some(buf) = &app.filter_input {
         format!("Filter: {buf}█  Enter: apply  Esc: cancel")
     } else {
-        "q: quit  j/k: select  c/m/p/n: sort  /: filter  x: kill  [ ]: nice".to_string()
+        "q: quit  j/k: select  c/m/p/n: sort  /: filter  x: kill  [ ]: nice  t: tree  h/l: fold"
+            .to_string()
     };
     frame.render_widget(
         Paragraph::new(footer_text).style(Style::default().fg(theme.muted).bg(theme.background)),
@@ -412,9 +413,10 @@ fn sort_label(key: SortKey) -> &'static str {
 
 fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
-    let visible = app.filtered_processes();
+    let visible = app.visible_processes();
+    let show_tree = app.tree_view && app.filter.is_empty();
     let dir = if app.sort_desc { "↓" } else { "↑" };
-    let title = if app.filter.is_empty() {
+    let mut title = if app.filter.is_empty() {
         format!(
             "Processes ({} {dir}, {} total)",
             sort_label(app.sort_key),
@@ -429,6 +431,9 @@ fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
             app.filter,
         )
     };
+    if show_tree {
+        title.push_str(" · tree");
+    }
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
@@ -443,7 +448,7 @@ fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
     let rows_available = inner.height.saturating_sub(1) as usize; // row 0 = column header
     let selected_idx = app
         .selected_pid
-        .and_then(|pid| visible.iter().position(|p| p.pid == pid))
+        .and_then(|pid| visible.iter().position(|r| r.process.pid == pid))
         .unwrap_or(0);
     let start = if selected_idx >= rows_available {
         selected_idx + 1 - rows_available
@@ -469,16 +474,32 @@ fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
         rows[0],
     );
 
-    for (row_idx, process) in visible[start..end].iter().enumerate() {
+    for (row_idx, row) in visible[start..end].iter().enumerate() {
+        let process = row.process;
         let is_selected = Some(process.pid) == app.selected_pid;
         let nice = process
             .nice
             .map(|n| n.to_string())
             .unwrap_or_else(|| "-".to_string());
+        let name = if show_tree {
+            let indent = "  ".repeat(row.depth);
+            let marker = if row.has_children {
+                if app.is_collapsed(process.pid) {
+                    "▸ "
+                } else {
+                    "▾ "
+                }
+            } else {
+                "  "
+            };
+            format!("{indent}{marker}{}", process.name)
+        } else {
+            process.name.clone()
+        };
         let text = format!(
             "{:>7} {:<24.24} {:>6.1}% {:>9.1}M {:>5}",
             process.pid,
-            process.name,
+            name,
             process.cpu_usage,
             process.memory as f64 / 1_048_576.0,
             nice,

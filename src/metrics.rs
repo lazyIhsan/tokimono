@@ -59,6 +59,9 @@ pub struct ProcessInfo {
     /// `None` if the nice value couldn't be read (e.g. the process exited
     /// between listing and the read).
     pub nice: Option<i32>,
+    /// Parent process id, for the tree view. `None` for a process with no
+    /// living parent (pid 1, a reparented orphan, or a kernel thread).
+    pub ppid: Option<u32>,
 }
 
 /// A network interface's throughput, in bytes/sec, since the last refresh.
@@ -215,7 +218,7 @@ impl Collector {
         // self.nice_cache, never self.system — keeps the borrow trivially
         // obvious rather than relying on the compiler seeing through a
         // single combined closure.
-        let base_processes: Vec<(u32, String, f32, u64)> = self
+        let base_processes: Vec<(u32, String, f32, u64, Option<u32>)> = self
             .system
             .processes()
             .iter()
@@ -225,6 +228,7 @@ impl Collector {
                     process.name().to_string_lossy().into_owned(),
                     process.cpu_usage(),
                     process.memory(),
+                    process.parent().map(|p| p.as_u32()),
                 )
             })
             .collect();
@@ -234,7 +238,7 @@ impl Collector {
         let mut next_nice_cache = HashMap::with_capacity(base_processes.len());
         let processes = base_processes
             .into_iter()
-            .map(|(pid, name, cpu_usage, memory)| {
+            .map(|(pid, name, cpu_usage, memory, ppid)| {
                 let nice = if refresh_nice {
                     let value = read_nice(pid);
                     if let Some(v) = value {
@@ -250,6 +254,7 @@ impl Collector {
                     cpu_usage,
                     memory,
                     nice,
+                    ppid,
                 }
             })
             .collect();
