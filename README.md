@@ -13,7 +13,7 @@
 ## ✨ Features
 
 - **Real-time metrics** — CPU (per-core + aggregate), memory, swap, load averages, NVIDIA GPU utilization/memory/temp
-- **Process management** — Sortable, filterable process table with kill/renice support and a parent/child tree view
+- **Process management** — Sortable, filterable process table with kill/renice support, a parent/child tree view, and grouping by cgroup/systemd unit
 - **Network & Disk I/O** — Live per-interface throughput and per-disk usage/read/write rates
 - **Beautiful TUI** — Built with Ratatui for smooth rendering and modern terminal styling
 - **Async & efficient** — Powered by Tokio for responsive, low-overhead monitoring
