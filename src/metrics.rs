@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs;
 use std::time::Instant;
 
 use nvml_wrapper::Nvml;
@@ -46,8 +47,60 @@ fn read_nice(pid: u32) -> Option<i32> {
 /// of per-process syscall volume, dwarfed by sysinfo's own CPU/memory
 /// reads (which can't be slowed without hurting the app's core "see what's
 /// eating my CPU right now" purpose). Refresh nice values at 1/4 the tick
-/// rate instead, caching the rest.
+/// rate instead, caching the rest. A process's cgroup membership has the
+/// same "effectively static" property (it doesn't move cgroups after
+/// spawn in normal operation), so the cgroup-label read shares this same
+/// cadence rather than getting its own constant.
 const NICE_REFRESH_EVERY_N_TICKS: u32 = 4;
+
+/// Extracts a human-readable cgroup/systemd-unit label from the contents of
+/// `/proc/<pid>/cgroup`. Pure parsing (no I/O) so it's easy to test against
+/// literal example contents.
+///
+/// Prefers the unified hierarchy line (`0::<path>`) — the standard on any
+/// modern systemd/cgroup-v2 host — falling back to the `name=systemd:`
+/// line for cgroup-v1-only systems. The label is the last non-empty
+/// `/`-separated path segment (e.g. `/system.slice/nginx.service` →
+/// `nginx.service`). An empty/root path (`0::/`) returns `None` — those
+/// are typically kernel threads with no meaningful unit, and get bucketed
+/// into a synthetic "(ungrouped)" group by the UI layer rather than
+/// silently vanishing from a grouped view.
+fn parse_cgroup_label(contents: &str) -> Option<String> {
+    let path = contents
+        .lines()
+        .find_map(|line| line.strip_prefix("0::"))
+        .or_else(|| {
+            contents
+                .lines()
+                .find_map(|line| line.split_once("name=systemd:").map(|(_, path)| path))
+        })?;
+    let segment = path.rsplit('/').find(|s| !s.is_empty())?;
+    Some(shorten_container_id(segment))
+}
+
+/// `docker-<64 hex chars>.scope` / `cri-containerd-<64 hex chars>.scope`
+/// are unreadable as-is — shortens the hash to 12 chars, matching `docker
+/// ps`'s short-id convention. Anything else (systemd units, other runtimes)
+/// passes through unchanged; this is the one container-runtime special
+/// case worth the complexity, not an attempt to cover every runtime.
+fn shorten_container_id(segment: &str) -> String {
+    for prefix in ["docker-", "cri-containerd-"] {
+        if let Some(rest) = segment.strip_prefix(prefix)
+            && let Some(hash) = rest.strip_suffix(".scope")
+            && hash.len() == 64
+            && hash.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return format!("{prefix}{}.scope", &hash[..12]);
+        }
+    }
+    segment.to_string()
+}
+
+/// Reads and parses a process's cgroup label. See `parse_cgroup_label`.
+fn cgroup_label(pid: u32) -> Option<String> {
+    let contents = fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
+    parse_cgroup_label(&contents)
+}
 
 /// A single process's stats for one refresh cycle.
 #[derive(Clone)]
@@ -62,6 +115,10 @@ pub struct ProcessInfo {
     /// Parent process id, for the tree view. `None` for a process with no
     /// living parent (pid 1, a reparented orphan, or a kernel thread).
     pub ppid: Option<u32>,
+    /// Cgroup/systemd-unit label, for the grouped view. See
+    /// `parse_cgroup_label`. `None` for root-cgroup processes (mostly
+    /// kernel threads).
+    pub group: Option<String>,
 }
 
 /// A network interface's throughput, in bytes/sec, since the last refresh.
@@ -176,6 +233,9 @@ pub struct Collector {
     /// `NICE_REFRESH_EVERY_N_TICKS` ticks (which also prunes dead pids) and
     /// read from on the ticks in between. See `NICE_REFRESH_EVERY_N_TICKS`.
     nice_cache: HashMap<u32, i32>,
+    /// Last known cgroup label per pid, refreshed on the same cadence and
+    /// by the same mechanism as `nice_cache`. See `NICE_REFRESH_EVERY_N_TICKS`.
+    group_cache: HashMap<u32, Option<String>>,
     tick_count: u32,
     last_refresh: Instant,
 }
@@ -195,6 +255,7 @@ impl Collector {
             nvml,
             nvml_error,
             nice_cache: HashMap::new(),
+            group_cache: HashMap::new(),
             tick_count: 0,
             last_refresh: Instant::now(),
         }
@@ -214,10 +275,10 @@ impl Collector {
             process_refresh_kind(),
         );
 
-        // Split into two passes so nice-value caching only ever touches
-        // self.nice_cache, never self.system — keeps the borrow trivially
-        // obvious rather than relying on the compiler seeing through a
-        // single combined closure.
+        // Split into two passes so nice/group caching only ever touches
+        // self.nice_cache/self.group_cache, never self.system — keeps the
+        // borrow trivially obvious rather than relying on the compiler
+        // seeing through a single combined closure.
         let base_processes: Vec<(u32, String, f32, u64, Option<u32>)> = self
             .system
             .processes()
@@ -233,13 +294,14 @@ impl Collector {
             })
             .collect();
 
-        let refresh_nice = self.tick_count.is_multiple_of(NICE_REFRESH_EVERY_N_TICKS);
+        let refresh_aux = self.tick_count.is_multiple_of(NICE_REFRESH_EVERY_N_TICKS);
         self.tick_count = self.tick_count.wrapping_add(1);
         let mut next_nice_cache = HashMap::with_capacity(base_processes.len());
+        let mut next_group_cache = HashMap::with_capacity(base_processes.len());
         let processes = base_processes
             .into_iter()
             .map(|(pid, name, cpu_usage, memory, ppid)| {
-                let nice = if refresh_nice {
+                let nice = if refresh_aux {
                     let value = read_nice(pid);
                     if let Some(v) = value {
                         next_nice_cache.insert(pid, v);
@@ -248,6 +310,13 @@ impl Collector {
                 } else {
                     self.nice_cache.get(&pid).copied()
                 };
+                let group = if refresh_aux {
+                    let value = cgroup_label(pid);
+                    next_group_cache.insert(pid, value.clone());
+                    value
+                } else {
+                    self.group_cache.get(&pid).cloned().flatten()
+                };
                 ProcessInfo {
                     pid,
                     name,
@@ -255,11 +324,13 @@ impl Collector {
                     memory,
                     nice,
                     ppid,
+                    group,
                 }
             })
             .collect();
-        if refresh_nice {
+        if refresh_aux {
             self.nice_cache = next_nice_cache;
+            self.group_cache = next_group_cache;
         }
 
         self.networks.refresh(true);
@@ -358,5 +429,78 @@ impl Collector {
 impl Default for Collector {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unified_hierarchy_line_is_preferred() {
+        let contents = "12:pids:/foo\n0::/system.slice/nginx.service\n";
+        assert_eq!(
+            parse_cgroup_label(contents),
+            Some("nginx.service".to_string())
+        );
+    }
+
+    #[test]
+    fn falls_back_to_v1_systemd_line_when_no_unified_line() {
+        let contents = "9:name=systemd:/system.slice/sshd.service\n8:pids:/\n";
+        assert_eq!(
+            parse_cgroup_label(contents),
+            Some("sshd.service".to_string())
+        );
+    }
+
+    #[test]
+    fn root_cgroup_is_none() {
+        assert_eq!(parse_cgroup_label("0::/\n"), None);
+    }
+
+    #[test]
+    fn empty_or_malformed_input_is_none_not_a_panic() {
+        assert_eq!(parse_cgroup_label(""), None);
+        assert_eq!(parse_cgroup_label("garbage\nmore garbage\n"), None);
+    }
+
+    #[test]
+    fn docker_container_hash_is_shortened() {
+        let hash = "a".repeat(64);
+        let contents = format!("0::/system.slice/docker-{hash}.scope\n");
+        assert_eq!(
+            parse_cgroup_label(&contents),
+            Some(format!("docker-{}.scope", &hash[..12]))
+        );
+    }
+
+    #[test]
+    fn containerd_hash_is_shortened() {
+        let hash = "b".repeat(64);
+        let contents = format!("0::/kubepods.slice/cri-containerd-{hash}.scope\n");
+        assert_eq!(
+            parse_cgroup_label(&contents),
+            Some(format!("cri-containerd-{}.scope", &hash[..12]))
+        );
+    }
+
+    #[test]
+    fn non_container_segment_passes_through_unchanged() {
+        let contents = "0::/user.slice/user-1000.slice/user@1000.service\n";
+        assert_eq!(
+            parse_cgroup_label(contents),
+            Some("user@1000.service".to_string())
+        );
+    }
+
+    #[test]
+    fn short_hash_is_not_mistaken_for_a_container_id() {
+        // Only 8 hex chars, not the real 64 — must not be truncated further.
+        let contents = "0::/system.slice/docker-deadbeef.scope\n";
+        assert_eq!(
+            parse_cgroup_label(contents),
+            Some("docker-deadbeef.scope".to_string())
+        );
     }
 }

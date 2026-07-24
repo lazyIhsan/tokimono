@@ -5,7 +5,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::app::{App, SortKey};
+use crate::app::{App, ProcessRow, ProcessView, SortKey};
 use crate::config::Theme;
 use crate::sparkline;
 
@@ -104,7 +104,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     } else if let Some(buf) = &app.filter_input {
         format!("Filter: {buf}█  Enter: apply  Esc: cancel")
     } else {
-        "q: quit  j/k: select  c/m/p/n: sort  /: filter  x: kill  [ ]: nice  t: tree  h/l: fold"
+        "q: quit  j/k: select  c/m/p/n: sort  /: filter  x: kill  [ ]: nice  t: view  h/l: fold"
             .to_string()
     };
     frame.render_widget(
@@ -414,13 +414,17 @@ fn sort_label(key: SortKey) -> &'static str {
 fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
     let visible = app.visible_processes();
-    let show_tree = app.tree_view && app.filter.is_empty();
+    let show_tree = app.view == ProcessView::Tree && app.filter.is_empty();
+    let show_groups = app.view == ProcessView::Grouped && app.filter.is_empty();
     let dir = if app.sort_desc { "↓" } else { "↑" };
     let mut title = if app.filter.is_empty() {
         format!(
             "Processes ({} {dir}, {} total)",
             sort_label(app.sort_key),
-            visible.len()
+            visible
+                .iter()
+                .filter(|r| matches!(r, ProcessRow::Process { .. }))
+                .count()
         )
     } else {
         format!(
@@ -433,6 +437,8 @@ fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
     };
     if show_tree {
         title.push_str(" · tree");
+    } else if show_groups {
+        title.push_str(" · group");
     }
     let block = Block::default()
         .borders(Borders::ALL)
@@ -448,7 +454,12 @@ fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
     let rows_available = inner.height.saturating_sub(1) as usize; // row 0 = column header
     let selected_idx = app
         .selected_pid
-        .and_then(|pid| visible.iter().position(|r| r.process.pid == pid))
+        .and_then(|pid| {
+            visible.iter().position(|r| match r {
+                ProcessRow::Process { process, .. } => process.pid == pid,
+                ProcessRow::Header { .. } => false,
+            })
+        })
         .unwrap_or(0);
     let start = if selected_idx >= rows_available {
         selected_idx + 1 - rows_available
@@ -475,44 +486,73 @@ fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
     );
 
     for (row_idx, row) in visible[start..end].iter().enumerate() {
-        let process = row.process;
-        let is_selected = Some(process.pid) == app.selected_pid;
-        let nice = process
-            .nice
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| "-".to_string());
-        let name = if show_tree {
-            let indent = "  ".repeat(row.depth);
-            let marker = if row.has_children {
-                if app.is_collapsed(process.pid) {
-                    "▸ "
+        match row {
+            ProcessRow::Header {
+                label,
+                count,
+                total_cpu,
+                total_mem,
+            } => {
+                let text = format!(
+                    "{label} ({count}, {total_cpu:.1}% CPU, {:.1}M)",
+                    *total_mem as f64 / 1_048_576.0,
+                );
+                frame.render_widget(
+                    Paragraph::new(text).style(
+                        Style::default()
+                            .fg(theme.accent)
+                            .add_modifier(Modifier::BOLD)
+                            .bg(theme.background),
+                    ),
+                    rows[1 + row_idx],
+                );
+            }
+            ProcessRow::Process {
+                process,
+                depth,
+                has_children,
+            } => {
+                let is_selected = Some(process.pid) == app.selected_pid;
+                let nice = process
+                    .nice
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "-".to_string());
+                let name = if show_tree {
+                    let indent = "  ".repeat(*depth);
+                    let marker = if *has_children {
+                        if app.is_collapsed(process.pid) {
+                            "▸ "
+                        } else {
+                            "▾ "
+                        }
+                    } else {
+                        "  "
+                    };
+                    format!("{indent}{marker}{}", process.name)
+                } else if show_groups {
+                    format!("  {}", process.name)
                 } else {
-                    "▾ "
-                }
-            } else {
-                "  "
-            };
-            format!("{indent}{marker}{}", process.name)
-        } else {
-            process.name.clone()
-        };
-        let text = format!(
-            "{:>7} {:<24.24} {:>6.1}% {:>9.1}M {:>5}",
-            process.pid,
-            name,
-            process.cpu_usage,
-            process.memory as f64 / 1_048_576.0,
-            nice,
-        );
-        let style = if is_selected {
-            Style::default()
-                .bg(theme.selection_bg)
-                .fg(theme.selection_fg)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().bg(theme.background)
-        };
-        frame.render_widget(Paragraph::new(text).style(style), rows[1 + row_idx]);
+                    process.name.clone()
+                };
+                let text = format!(
+                    "{:>7} {:<24.24} {:>6.1}% {:>9.1}M {:>5}",
+                    process.pid,
+                    name,
+                    process.cpu_usage,
+                    process.memory as f64 / 1_048_576.0,
+                    nice,
+                );
+                let style = if is_selected {
+                    Style::default()
+                        .bg(theme.selection_bg)
+                        .fg(theme.selection_fg)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().bg(theme.background)
+                };
+                frame.render_widget(Paragraph::new(text).style(style), rows[1 + row_idx]);
+            }
+        }
     }
 }
 
